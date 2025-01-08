@@ -1,11 +1,14 @@
 import os
 from math import sqrt
 from xml.etree import ElementTree as ET
+from xml.etree.ElementTree import Element
 from torchvision import transforms
 import torch
 import cv2
 import numpy as np
 from torch.nn import functional as F
+from typing import Callable
+from functools import wraps
 
 img_root = '/home/akie/workplace/mylib/datas/DataSets/VOCdevkit/VOC2012/JPEGImages'
 annotation_root = '/home/akie/workplace/mylib/datas/DataSets/VOCdevkit/VOC2012/Annotations'
@@ -22,6 +25,67 @@ class SquarePad():
 		padding = (hp, hp, vp, vp)
 		return F.pad(image, padding, 'constant', 0)
 
+# VOC数据处理函数--------------------------------------------------------------------------------------------
+def xml2annotation(xml_path:str) -> tuple[tuple[int, int], list[list[int]], list[list[int]]]:
+    '''
+    xml文件转换为annotation列表
+    param:
+        xml_path: str, xml文件路径
+    return:
+        size: (w, h) tuple 图片尺寸
+        objs_list: [object[x1, x2, y1, y2]] tensor, 目标矩阵
+        cls_index_list: [cls_index] list, 目标类别索引列表
+    '''
+
+    # 排查Element对象的text属性为None以及find结果为None的问题
+    class MyElement():
+        def __init__(self, element:Element, path:str) -> None:
+            self.element = element
+            self.path = path
+
+            text = element.text
+            assert text is not None, f'{path.split("/")[0]} {self.element.tag} is None.'
+            self.text = text
+
+        def find(self, name:str) -> 'MyElement':
+            find_result = self.element.find(name)
+            assert find_result is not None , f'{self.path.split("/")[0]} {name} is None.'
+            return MyElement(find_result, self.path)
+        
+        def findall(self, name:str) -> list['MyElement']:
+            find_result = self.element.findall(name)
+            assert len(find_result) > 0, f'{self.path.split("/")[0]} {name} is None.'
+            return [MyElement(i, self.path) for i in find_result]
+
+    annotation_tree = ET.parse(xml_path)
+    anno_tree_root = annotation_tree.getroot()
+    anno_tree_root = MyElement(anno_tree_root, xml_path)
+
+    # 找图片尺寸
+    size = anno_tree_root.find('size')
+    w = int(size.find('width').text)    #图片宽度
+    h = int(size.find('height').text)   #图片高度
+
+    # 找目标
+    objs = anno_tree_root.findall('object')
+    objs_list = []
+    cls_index_list = []
+    for obj in objs:
+        obj_detail = []
+        name = obj.find('name').text
+        box = obj.find('bndbox')
+
+        obj_detail.append(int(box.find('xmin').text))
+        obj_detail.append(int(box.find('ymin').text))
+        obj_detail.append(int(box.find('xmax').text))
+        obj_detail.append(int(box.find('ymax').text))
+
+        objs_list.append(obj_detail)
+        cls_index_list.append(file_list.index(name))
+
+    return (w, h), torch.Tensor(objs_list), cls_index_list
+
+# --------------------------------------------------------------------------------------------
 
 def process_origin_data(img_id, file_list, patten, s, b, c_nums, imgs_root, annotations_root) -> tuple[str, torch.Tensor]:
     '''
@@ -218,23 +282,8 @@ def draw_rec(img:torch.Tensor, y:torch.Tensor, s=7, b=2, img_size=224):
 
 
 if __name__ == '__main__':
-    pt_list = []
-
-    img_path, y = get_y('2007_000121')
-    img = cv2.imread(img_path)
-
-    unify_transform = transforms.Compose([
-                transforms.ToTensor(),
-                SquarePad(),
-                transforms.Resize((448, 448))
-                ])
-
-    rimg = unify_transform(img)
-    # rimg = np.array(transforms.ToPILImage()(rimg))
-
-    rimg = draw_rec(rimg, y)
-
-    # for pt in pt_list:
-    #     rimg = cv2.rectangle(rimg, pt[0], pt[1], (255, 0, 0), 1)
-    cv2.imwrite('test.jpg', rimg)
+    xml_path = 'DataSets/VOCdevkit/VOC2012/Annotations/2012_004309.xml'
+    size, annotation = xml2annotation(xml_path)
+    print(size)
+    print(annotation)
     
